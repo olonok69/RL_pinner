@@ -1,4 +1,8 @@
+import warnings
 import pandas as pd
+from pandas.core.common import SettingWithCopyWarning
+warnings.simplefilter(action="ignore", category=SettingWithCopyWarning)
+
 import numpy as np
 import pickle
 import os
@@ -27,6 +31,25 @@ def get_neighbors(row, distances):
     ts=distances[pin_row][distances_sorted[0]]*1.90
     return [x for x in  distances_sorted if distances[pin_row][x] < ts]
 
+def get_neighbors_length(row):
+    n=row['neighbors']
+    return len(n)
+
+def get_list_empty(row):
+    return ['0']
+
+
+def myfunc_data(data):
+    """
+
+    :param data:
+    :return:
+    """
+    # function groupping by
+    data['number_internal_pin'] = len(data[data["internal_pin"] == "True"])
+
+    return data
+
 def get_neighbors_partnumbers(data):
     """
 
@@ -36,7 +59,7 @@ def get_neighbors_partnumbers(data):
     data["distance_to_center"] = data.apply(lambda row: cal_distance_center(row), axis=1)
     list_pn = list(data['Symbol Name'].unique())
     cols = ['Symbol Name', 'Pin Name', 'Pin CenterY', 'Pin CenterX', 'Pin Width',
-            'Pin Height', 'distance_to_center', 'neighbors']
+            'Pin Height', 'distance_to_center', 'neighbors','neighbors_length']
 
     dataout = pd.DataFrame([], columns=cols)
     for pn in list_pn:
@@ -61,15 +84,21 @@ def get_neighbors_partnumbers(data):
                         distances[pin][pin2] = distance
             #  get neighbors
             data1['neighbors'] = data1.apply(lambda row: get_neighbors(row, distances), axis=1)
+            data1['neighbors_length'] = data1.apply(lambda row: get_neighbors_length(row), axis=1)
             dataout = pd.concat([dataout, data1])
         else:
             #print(pn)
-            data1['neighbors'] = ["no"]
+            data1['neighbors'] = data1.apply(lambda row: get_list_empty(row), axis=1)
+            data1['neighbors_length'] = data1.apply(lambda row: get_neighbors_length(row), axis=1)
             dataout = pd.concat([dataout, data1])
 
-    dataout["internal_pin"]="False"
+    # New fiellds
+    dataout["internal_pin"] = ""
+    dataout["mean_neighbors"] = ""
+    dataout["centroide_distance"] = ""
     cols = ['Symbol Name', 'Pin Name', 'Pin CenterY', 'Pin CenterX', 'Pin Width',
-            'Pin Height', 'distance_to_center', 'neighbors', 'internal_pin']
+            'Pin Height', 'distance_to_center', 'neighbors', 'neighbors_length', 'internal_pin',
+            'mean_neighbors', 'centroide_distance']
 
     dataout2 = pd.DataFrame([], columns=cols)
     for pn in list_pn:
@@ -103,19 +132,26 @@ def get_neighbors_partnumbers(data):
                 yg=0-(np.sum(ys)/len(ys))
                 #calculate distance centroide to center
                 centroide_distance=sqrt((xg*xg)+(yg*yg))
-                print(f"{centroide_distance} {distance_to_center}")
+                #print(f"{centroide_distance} {distance_to_center}")
                 data1.at[i,'internal_pin']= str((centroide_distance*1.1> distance_to_center>centroide_distance*0.90)
                                                 and (distance_to_center>centroide_distance))
-
+                data1.at[i, 'mean_neighbors'] = nave
+                data1.at[i, 'centroide_distance'] = centroide_distance
             dataout2 = pd.concat([dataout2, data1])
         else:
             #print(pn)
             data1['internal_pin']=str(False)
+            data1['mean_neighbors'] = 0
+            data1['centroide_distance'] = 0
             dataout2 = pd.concat([dataout2, data1])
 
+    dataout2 = dataout2.groupby('Symbol Name').apply(myfunc_data)
+    groupped=dataout2.groupby("Symbol Name").agg({"distance_to_center":["min","max"] })
+    groupped.reset_index(inplace=True)
+    groupped.columns=['Symbol Name', 'min_distance', 'max_distance']
 
-
-    return dataout2
+    final = pd.merge(dataout2, groupped, on='Symbol Name', how='inner')
+    return final
 
 
 def signal_equal(row):
@@ -195,6 +231,39 @@ def get_dictionary(data):
     data['dicc_signals'] = str(dict(enumerate(c.cat.categories)))
     return data
 
+def no_signal_in_pin(row):
+    """
+    No signal in that pin
+    :param row:
+    :return:
+    """
+    if row["Signal Name"]=="na":
+        return 1
+    else:
+        return 0
+
+
+def multicore_data(data):
+    """
+    grouuping categories per connector
+    :param data:
+    :return:
+    """
+    data['multicore_same'] = data["MulticoreInnerToOutter1"].astype('category').cat.codes
+
+    return data
+
+def is_multicore(row):
+    """
+    cable is part of a multicore
+    :param row:
+    :return:
+    """
+    if row['MulticoreInnerToOutter1']!="na":
+        return 1
+    else:
+        return 0
+
 def preprocess_data(data, symbols):
     """
 
@@ -247,7 +316,22 @@ def preprocess_data(data, symbols):
     groupped2['Cat_PreferredSignal'] = groupped2.apply(lambda row: get_key(row, "Pin PreferredSignal"), axis=1)
     #number of different signals
     num_categories= len(d.keys())
-    #jpin symbols information, distances and neighbors
+    # Color categories and min max thickness
+    groupped2["Cat_Wire_WireColor"] = groupped2["Wire WireColor"].astype('category').cat.codes
+    groupped2["Cat_Wire_WireColor_max"] = groupped2["Cat_Wire_WireColor"].max()
+    groupped2["Wire_WireCSA_min"] = groupped2["Wire WireCSA"].min()
+    groupped2["Wire_WireCSA_max"] = groupped2["Wire WireCSA"].max()
+    groupped2['Num_Pin_unique_max'] = groupped2['Num_Pin_unique'].max()
+    # there is no signal mapped to this pin
+    groupped2["no_signal_pin"] = groupped2.apply(lambda row: no_signal_in_pin(row), axis=1)
+    # group of multicores in this  connector , including the na
+    groupped2 = groupped2.groupby('Connector Name').apply(multicore_data)
+    # signal is part of a multicore
+    groupped2['is_multicore'] = groupped2.apply(lambda row: is_multicore(row), axis=1)
+    # max category multicore
+    groupped2['max_categories_multicore'] = groupped2['multicore_same'].max()
+
+    #join symbols information, distances and neighbors
     groupped2['Pin Name'] = groupped2['Pin Name'].astype(str)
     groupped2 = pd.merge(groupped2, symbols, left_on=['Connector PartNumber', 'Pin Name'],
                          right_on=['Symbol Name', 'Pin Name'], how="left")
@@ -332,6 +416,56 @@ def create_connector_dicc(groupped2):
         # internal connector / external  connertor  internal_pin
         internal_pin = groupped2.loc[i, 'internal_pin']
         connectors[connector][pin]['internal_pin'] = internal_pin
+
+        # number of neigbourgs
+        neighbors_length = groupped2.loc[i, 'neighbors_length']
+        connectors[connector][pin]['neighbors_length'] = neighbors_length
+
+        # mean_neighbors
+        mean_neighbors = groupped2.loc[i, 'mean_neighbors']
+        connectors[connector][pin]['mean_neighbors'] = mean_neighbors
+        # centroide_distance
+        centroide_distance = groupped2.loc[i, 'centroide_distance']
+        connectors[connector][pin]['centroide_distance'] = centroide_distance
+
+        # number_internal_pin
+        number_internal_pin = groupped2.loc[i, 'number_internal_pin']
+        connectors[connector][pin]['number_internal_pin'] = number_internal_pin
+        # max_distance
+        max_distance = groupped2.loc[i, 'max_distance']
+        connectors[connector][pin]['max_distance'] = max_distance
+        # max_distance
+        min_distance = groupped2.loc[i, 'min_distance']
+        connectors[connector][pin]['min_distance'] = min_distance
+        # Cat_Wire_WireColor
+        Cat_Wire_WireColor = groupped2.loc[i, 'Cat_Wire_WireColor']
+        connectors[connector][pin]['Cat_Wire_WireColor'] = Cat_Wire_WireColor
+        # Cat_Wire_WireColor
+        Cat_Wire_WireColor_max = groupped2.loc[i, 'Cat_Wire_WireColor_max']
+        connectors[connector][pin]['Cat_Wire_WireColor_max'] = Cat_Wire_WireColor_max
+        # Wire_WireCSA_min
+        Wire_WireCSA_min = groupped2.loc[i, 'Wire_WireCSA_min']
+        connectors[connector][pin]['Wire_WireCSA_min'] = Wire_WireCSA_min
+        # Wire_WireCSA_max
+        Wire_WireCSA_max = groupped2.loc[i, 'Wire_WireCSA_max']
+        connectors[connector][pin]['Wire_WireCSA_max'] = Wire_WireCSA_max
+        # Num_Pin_unique_max
+        Num_Pin_unique_max = groupped2.loc[i, 'Num_Pin_unique_max']
+        connectors[connector][pin]['Num_Pin_unique_max'] = Num_Pin_unique_max
+
+        # no_signal_pin
+        no_signal_pin = groupped2.loc[i, 'no_signal_pin']
+        connectors[connector][pin]['no_signal_pin'] = no_signal_pin
+        # multicore_same detected 8 categories
+        multicore_same = groupped2.loc[i, 'multicore_same']
+        connectors[connector][pin]['multicore_same'] = multicore_same
+        # is_multicore
+        is_multicore = groupped2.loc[i, 'is_multicore']
+        connectors[connector][pin]['is_multicore'] = is_multicore
+        # max_categories_multicore
+        max_categories_multicore = groupped2.loc[i, 'max_categories_multicore']
+        connectors[connector][pin]['max_categories_multicore'] = max_categories_multicore
+
         # signal_category Group
         try:
             distance_to_center = groupped2.loc[i, 'distance_to_center']
@@ -358,3 +492,58 @@ def save_dict_pickle(dict, file, path):
         pickle.dump(dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
     return
 
+def get_bin_10(n,bins10):
+    """
+    get bin index
+    :param n:
+    :param bins10:
+    :return:
+    """
+    _bin=10
+    for i in range(0,len(bins10)):
+        if bins10[i]> n:
+            _bin=i-1
+            break
+    return _bin
+def get_pin_signal(sig_conn,i):
+    """
+    #1 number pins [0,Num_Pin_unique_max]
+    #2 distance to center pin [0,11]bucket
+    #3 number of neighbors[0,Num_Pin_unique_max-1]
+    #4 internal/external[0,1]
+    #5 mean_neighbors [0,11]bucket
+    #6 distance centroide [0,11]bucket
+    #7 signal category [0,7]
+    #8 color wire categorical[0,max_color_categories]
+    #9 thickness wire continuous[0,51]bucket
+    #10 multicore yes/no [0,1]
+    #11 number of internal pins [0,Num_Pin_unique_max//2]
+    #12 nosignal [0,1]
+    #13 ismulticore [0,1]
+    #14 category multicore [0,max_multicore_categories]
+    get observation from File
+    :param sig_conn:
+    :param i:
+    :return:
+    """
+    # create bins
+    bins_distance= np.linspace(sig_conn['1']['min_distance'], sig_conn['1']['max_distance'], 11)
+    bins_thickness= np.linspace(sig_conn['1']['Wire_WireCSA_min'], sig_conn['1']['Wire_WireCSA_max'], 51)
+
+    Num_Pins=sig_conn[str(i)]['Num_Pins']
+    distance_to_center=get_bin_10(sig_conn[str(i)]['distance_to_center'], bins_distance)
+    neighbors_length=sig_conn[str(i)]['neighbors_length']
+    internal_pin = 1 if sig_conn[str(i)]['internal_pin'] =='True' else 0
+    mean_neighbors=get_bin_10(sig_conn[str(i)]['mean_neighbors'], bins_distance)
+    centroide_distance=get_bin_10(sig_conn[str(i)]['centroide_distance'], bins_distance)
+    signal_group=sig_conn[str(i)]['signal_group']
+    Cat_Wire_WireColor=sig_conn[str(i)]['Cat_Wire_WireColor']
+    WireCSA=get_bin_10(sig_conn[str(i)]['WireCSA'], bins_thickness)
+    is_multicore = 0 if sig_conn[str(i)]['is_multicore'] =='na' else 1
+    number_internal_pin= sig_conn[str(i)]['number_internal_pin']
+    nosignal = sig_conn[str(i)]['no_signal_pin']
+    ismulticore= sig_conn[str(i)]['is_multicore']
+    cat_multicore=sig_conn[str(i)]['multicore_same']
+    return list([Num_Pins,distance_to_center,neighbors_length,internal_pin,mean_neighbors,
+                 centroide_distance,signal_group,Cat_Wire_WireColor,WireCSA,is_multicore,
+                 number_internal_pin,nosignal,ismulticore, cat_multicore])

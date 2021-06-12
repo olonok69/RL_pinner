@@ -1,9 +1,11 @@
 import numpy as np
 import gym
 from gym import spaces
-import random
 from gym.utils import seeding
-
+from stable_baselines3 import DQN
+from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.env_checker import check_env
+import time
 
 class conn(gym.Env):
     """
@@ -289,15 +291,15 @@ class conn(gym.Env):
         real = self.get_real(action)  # real values
         # calculate Reward
         self.reward = self.reward + self.calculate_reward(self.state)
-        print(self.reward)
+
 
         self.already_pinned.append(self.agent_pos + 1)  # list control which pin are already in use
         # self.terminal = bool(self.agent_pos >= 1000) or self.reward > self.grid_size*7
         self.wirecolors.append(self.connectors_dicc[self.this_connector][str(real)]['WireColor'])
         self.signal_groups.append(self.connectors_dicc[self.this_connector][str(real)]['signal_group'])
-        self.already_pinned_thickness.append(connectors_dicc[self.this_connector][str(real)]['WireCSA'])
-        self.already_pinned_in_out.append(connectors_dicc[self.this_connector][str(real)]['internal_pin'])
-        self.multicore_pinned.append(connectors_dicc[self.this_connector][str(real)]['Multicore'])
+        self.already_pinned_thickness.append(self.connectors_dicc[self.this_connector][str(real)]['WireCSA'])
+        self.already_pinned_in_out.append(self.connectors_dicc[self.this_connector][str(real)]['internal_pin'])
+        self.multicore_pinned.append(self.connectors_dicc[self.this_connector][str(real)]['Multicore'])
         # Account for the boundaries of the grid
         self.agent_pos = self.agent_pos + 1
         self.terminal = bool(self.agent_pos > self.grid_size - 1)
@@ -306,3 +308,69 @@ class conn(gym.Env):
         info = {}
 
         return self.state, self.reward, self.terminal, info
+
+
+
+
+
+def train_agent1(connectors_dicc, connector, data, max_categories):
+    """
+    train agent 1
+    :param connectors_dicc:
+    :param connector:
+    :param data:
+    :param max_categories:
+    :return:
+    """
+    len_test_conn = len(connectors_dicc[connector].keys()) - 1
+    data1 = data[data['Connector Name'] == connector]
+
+    list_signals = list(data1['Cat_Signal Name'].unique())
+    # state space is all the category signal we show for that kind of connector with n pins . calculated in
+    # pre_processing dictionary dicc__signals
+    state_space = len(eval(connectors_dicc[connector]['1']['dicc_signals']).keys())
+    env_train = DummyVecEnv(
+        [lambda: conn(connectors_dicc, list_signals, connector, len_test_conn, max_categories, state_space)])
+    model = DQN('MlpPolicy', env_train, verbose=2)
+
+    # train model
+    time1 = time.time()
+    model.learn(10000)
+    time2 = time.time()
+
+    print(time2 - time1)
+    model.save(f"models/model_{len_test_conn}.pkl")
+    return model
+
+def predict_agent1(connectors_dicc, connector, list_signals, max_categories, state_space, signals_cats):
+    """
+    Prediction Agent 1
+    :param connectors_dicc:
+    :param connector:
+    :param list_signals:
+    :param max_categories:
+    :param state_space:
+    :param signals_cats:
+    :return:
+    """
+    len_test_conn = len(connectors_dicc[connector].keys()) - 1
+    model = DQN.load(f"models/model_{len_test_conn}.pkl")
+
+    env = conn(connectors_dicc, list_signals, connector, len_test_conn, max_categories, state_space)
+    check_env(env, warn=True)
+    obs = env.reset()
+    env.render()
+    print(env.observation_space)
+    print(env.action_space)
+    print(env.action_space.sample())
+    obser = signals_cats
+    new_observ = list(np.zeros(len(obser), dtype='int'))
+    reward = 0
+    for x in range(0, len(obser)):
+        new_observ[x] = obser[x]
+        # print(new_observ)
+        pred = model.predict(np.array(new_observ), deterministic=True)
+        #print(pred)
+        reward = reward + pred[0]
+
+    return reward
