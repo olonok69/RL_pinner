@@ -4,9 +4,11 @@ from gym import spaces
 from gym.utils import seeding
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3 import TD3, PPO, A2C, SAC, DDPG
-from stable_baselines3.common.env_checker import check_env
+#from stable_baselines3.common.env_checker import check_env
+from gym import logger
+logger.set_level(40)
 import time
-
+dir="c:/temp/"
 
 class agent2(gym.Env):
     # Custom Environment that follows gym interface.
@@ -18,7 +20,7 @@ class agent2(gym.Env):
     # 4 internal/external[0,1]
     # 5 mean_neighbors [0,11]bucket
     # 6 distance centroide [0,11]bucket
-    # 7 signal category [0,7]
+    # 7 signal category [0,8]
     # 8 color wire categorical[0,max_color_categories]
     # 9 thickness wire continuous[0,51]bucket
     # 10 multicore yes/no [0,1]
@@ -43,13 +45,13 @@ class agent2(gym.Env):
         self.m = max_categories_multicore
         self.action_space = spaces.Box(low=np.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
                                        high=np.array(
-                                           [self.p + 1, 11, self.p, 1, 11, 11, 8, self.c + 1, 51, 1, int(self.p // 2),
+                                           [self.p + 1, 11, self.p, 1, 11, 11, 9, self.c + 1, 51, 1, int(self.p // 2),
                                             1, 1, self.m + 1]),
                                        shape=(self.lae,))
         # observation space low/High bound number of diferent signals this connector
         # size, vector length number of pins
         self.observation_space = spaces.Box(low=np.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                                            high=np.array([self.p + 1, 11, self.p, 1, 11, 11, 8, self.c + 1, 51, 1,
+                                            high=np.array([self.p + 1, 11, self.p, 1, 11, 11, 9, self.c + 1, 51, 1,
                                                            int(self.p // 2), 1, 1, self.m + 1]),
                                             shape=(self.lae,))
         # estate list of actions
@@ -89,7 +91,7 @@ class agent2(gym.Env):
         if mode != 'console':
             raise NotImplementedError()
         # agent is represented as a cross, rest as a dot
-        print(self.reward)
+        #print(self.reward)
         return
 
     def get_reward_cat(self, signal_cat, int_ext, distance, no_signal_pin):
@@ -101,30 +103,30 @@ class agent2(gym.Env):
         else:
             reward = reward + 4
         # higvoltage close in internal PIN or close to an empty cavity
-        if (signal_cat in [1, 6]) and int_ext == 1:
+        if (signal_cat in [1, 6,8]) and int_ext == 1:
             reward = reward + 5
-        elif (signal_cat in [1, 6]) and no_signal_pin == 1:
+        elif (signal_cat in [1, 6,8]) and no_signal_pin == 1:
             reward = reward + 2
         else:
             reward = reward - 5
 
         # if GROUND is present reward more when far from High Power categories
-        if (signal_cat in [1, 6]) and 4 in self.signal_in_conector:
+        if (signal_cat in [1, 6,8]) and 4 in self.signal_in_conector:
             reward = reward - int((distance + 10) // 4)
         else:
             reward = reward + int((distance + 10) // 4)
 
-        if (signal_cat in [1, 6]) and 5 in self.signal_in_conector:
+        if (signal_cat in [1, 6,8]) and 5 in self.signal_in_conector:
             reward = reward - int((distance + 10) // 4)
         else:
             reward = reward + int((distance + 10) // 4)
         # if High power     is present reward more when far from ground categories
-        if (signal_cat in [4, 5]) and 1 in self.signal_in_conector:
+        if (signal_cat in [4, 5,8]) and 1 in self.signal_in_conector:
             reward = reward - int((distance + 10) // 4)
         else:
             reward = reward + int((distance + 10) // 4)
 
-        if (signal_cat in [4, 5]) and 6 in self.signal_in_conector:
+        if (signal_cat in [4, 5,8]) and 6 in self.signal_in_conector:
             reward = reward - int((distance + 10) // 4)
         else:
             reward = reward + int((distance + 10) // 4)
@@ -280,7 +282,7 @@ def get_pin_signal(sig_conn,i):
                  number_internal_pin,nosignal,ismulticore, cat_multicore])
 
 
-def train_agent2(connectors_dicc, connector, data, max_categories, algo):
+def train_agent2(connectors_dicc, connector, data, max_categories, algo, size):
     """
     Train agent 2
     :param Num_Pin_unique_max:
@@ -293,6 +295,20 @@ def train_agent2(connectors_dicc, connector, data, max_categories, algo):
     max_color_categories =  connectors_dicc[connector]['1']['Cat_Wire_WireColor_max']
     max_categories_multicore = connectors_dicc[connector]['1']['max_categories_multicore']
     Num_Pins = connectors_dicc[connector]['1']['Num_Pins']
+    dicc_signals = eval(connectors_dicc[connector]['1']['dicc_signals'])
+    num_signals = len(dicc_signals.keys())
+
+    if num_signals < 10 and Num_Pins < 10 :
+        number_possible_variations = num_signals ** Num_Pins
+    else:
+        number_possible_variations =50000
+    num_iterations = 0
+    #power = len(str(number_possible_variations)) - 5
+    if number_possible_variations < 20000:
+        num_iterations = 20000
+    else:
+
+        num_iterations = 50000
 
     env_train = DummyVecEnv(
         [lambda: agent2(Num_Pin_unique_max, max_color_categories, max_categories_multicore, Num_Pins)])
@@ -310,15 +326,17 @@ def train_agent2(connectors_dicc, connector, data, max_categories, algo):
         model = DDPG('MlpPolicy', env_train, verbose=2, create_eval_env=True)
 
     time1 = time.time()
-    model.learn(15000)
+    model.learn(num_iterations)
     time2 = time.time()
-    print(time2 - time1)
+
     model_name=f"{algo}_agent2"
-    model.save(f"models/model_{model_name}.pkl")
-    return model
+    model.save(dir+ f"models/model_{model_name}_{size}.pkl")
+    print(f"Saved Model Agent2 Size {size} training time {time2 - time1}")
+    return
 
 
 def predict_agent2(connectors_dicc, connector, algo):
+
     Num_Pin_unique_max = connectors_dicc[connector]['1']['Num_Pin_unique_max']
     max_color_categories = connectors_dicc[connector]['1']['Cat_Wire_WireColor_max']
     max_categories_multicore = connectors_dicc[connector]['1']['max_categories_multicore']
@@ -326,33 +344,33 @@ def predict_agent2(connectors_dicc, connector, algo):
 
     env = agent2(Num_Pin_unique_max, max_color_categories, max_categories_multicore, Num_Pins)
 
-    env.render()
-    check_env(env, warn=True)
-    print(env.observation_space)
-    print(env.action_space)
-    print(env.action_space.sample())
+    # env.render()
+    # check_env(env, warn=True)
+    # print(env.observation_space)
+    # print(env.action_space)
+    # print(env.action_space.sample())
     if algo == "TD3":
         model_name = f"{algo}_agent2"
-        model = TD3.load(f"models/model_{model_name}.pkl")
+        model = TD3.load(dir+ f"models/model_{model_name}.pkl")
     elif algo == "PPO":
         model_name = f"{algo}_agent2"
-        model = PPO.load(f"models/model_{model_name}.pkl")
+        model = PPO.load(dir+ f"models/model_{model_name}.pkl")
     elif algo == "A2C":
         model_name = f"{algo}_agent2"
-        model = A2C.load(f"models/model_{model_name}.pkl")
+        model = A2C.load(dir+ f"models/model_{model_name}.pkl")
     elif algo == "SAC":
         model_name = f"{algo}_agent2"
-        model = SAC.load(f"models/model_{model_name}.pkl")
+        model = SAC.load(dir+ f"models/model_{model_name}.pkl")
     elif algo == "DDPG":
         model_name = f"{algo}_agent2"
-        model = DDPG.load(f"models/model_{model_name}.pkl")
+        model = DDPG.load(dir+ f"models/model_{model_name}.pkl")
 
     obs = env.reset()
     reward=0
     for key in connectors_dicc[connector].keys():
         if key != 'PartNumber':
             obs = np.array(get_pin_signal(connectors_dicc[connector], key))
-            action, _state = model.predict(obs, deterministic=False)
+            action, _state = model.predict(obs, deterministic=True)
 
             obs, reward, done, info = env.step(action.astype(int))
 
@@ -361,4 +379,44 @@ def predict_agent2(connectors_dicc, connector, algo):
                 obs = env.reset()
 
     return reward
+
+
+def demo_agent2(connectors_dicc, connector, algo):
+    """
+
+    :param connectors_dicc:
+    :param connector:
+    :param algo:
+    :return:
+    """
+    Num_Pin_unique_max = connectors_dicc[connector]['1']['Num_Pin_unique_max']
+    max_color_categories = connectors_dicc[connector]['1']['Cat_Wire_WireColor_max']
+    max_categories_multicore = connectors_dicc[connector]['1']['max_categories_multicore']
+    Num_Pins = connectors_dicc[connector]['1']['Num_Pins']
+
+    env = agent2(Num_Pin_unique_max, max_color_categories, max_categories_multicore, Num_Pins)
+
+    # env.render()
+    # check_env(env, warn=True)
+    # print(env.observation_space)
+    # print(env.action_space)
+    # print(env.action_space.sample())
+    if algo == "TD3":
+        model_name = f"{algo}_agent2"
+        model = TD3.load(dir+ f"models/model_{model_name}_{Num_Pins}.pkl")
+    elif algo == "PPO":
+        model_name = f"{algo}_agent2"
+        model = PPO.load(dir+ f"models/model_{model_name}_{Num_Pins}.pkl")
+    elif algo == "A2C":
+        model_name = f"{algo}_agent2"
+        model = A2C.load(dir+ f"models/model_{model_name}_{Num_Pins}.pkl")
+    elif algo == "SAC":
+        model_name = f"{algo}_agent2"
+        model = SAC.load(dir+ f"models/model_{model_name}_{Num_Pins}.pkl")
+    elif algo == "DDPG":
+        model_name = f"{algo}_agent2"
+        model = DDPG.load(dir+ f"models/model_{model_name}_{Num_Pins}.pkl")
+
+
+    return model, env
 

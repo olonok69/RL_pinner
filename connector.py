@@ -6,6 +6,7 @@ from stable_baselines3 import DQN
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.env_checker import check_env
 import time
+dir="c:/temp/"
 
 class conn(gym.Env):
     """
@@ -332,14 +333,14 @@ def train_agent1(connectors_dicc, connector, data, max_categories):
     env_train = DummyVecEnv(
         [lambda: conn(connectors_dicc, list_signals, connector, len_test_conn, max_categories, state_space)])
     model = DQN('MlpPolicy', env_train, verbose=2)
-
+    #embed()
     # train model
     time1 = time.time()
     model.learn(10000)
     time2 = time.time()
 
     print(time2 - time1)
-    model.save(f"models/model_{len_test_conn}.pkl")
+    model.save(dir+ f"models/model_{len_test_conn}.pkl")
     return model
 
 def predict_agent1(connectors_dicc, connector, list_signals, max_categories, state_space, signals_cats):
@@ -354,7 +355,7 @@ def predict_agent1(connectors_dicc, connector, list_signals, max_categories, sta
     :return:
     """
     len_test_conn = len(connectors_dicc[connector].keys()) - 1
-    model = DQN.load(f"models/model_{len_test_conn}.pkl")
+    model = DQN.load(dir+ f"models/model_{len_test_conn}.pkl")
 
     env = conn(connectors_dicc, list_signals, connector, len_test_conn, max_categories, state_space)
     check_env(env, warn=True)

@@ -2,12 +2,28 @@ import warnings
 import pandas as pd
 from pandas.core.common import SettingWithCopyWarning
 warnings.simplefilter(action="ignore", category=SettingWithCopyWarning)
-
+import random
+from connector2 import demo_agent2
 import numpy as np
+import copy
 import pickle
 import os
 from math import sqrt
-from IPython import embed
+import multiprocessing
+import functools
+from connector2 import *
+
+
+
+dicc_13={0: 'CLEARANCE_SNR_ECU_0885', 1: 'CLEARANCE_SNR_ECU_0890', 2: 'EQ_FUEL_PRESS_SSR_HI-TNGA_E2',
+         3: 'EQ_FUEL_PRESS_SSR_HI-TNGA_PR', 4: 'EQ_FUEL_PRESS_SSR_HI-TNGA_VC', 5: 'EQ_NE_SSR-TNGA_NE-',
+         6: 'EQ_NE_SSR-TNGA_NEP', 7: 'EQ_NE_SSR-TNGA_VCNE', 8: 'EQ_PDB_L_1', 9: 'EQ_PDB_L_2', 10: 'EQ_PDB_L_5',
+         11: 'GND_BK_UP_LP_LH_E', 12: 'HV_ECU-HV_0024', 13: 'HV_ECU-HV_0025', 14: 'SLD_EFI_ECU-TNGA_KNOCK_SSR_101',
+         15: 'SLD_EFI_ECU-TNGA_KNOCK_SSR_102', 16: 'SLD_MG_ECU_197', 17: 'SLD_MG_ECU_198', 18: 'SLD_MG_ECU_199',
+         19: 'SLD_MG_ECU_200', 20: 'SLD_MG_ECU_201', 21: 'SLD_MG_ECU_202', 22: 'SLD_MG_ECU_203',
+         23: 'TW_CLEARANCE_SNR_ECU_055', 24: 'TW_CLEARANCE_SNR_ECU_056', 25: 'TW_CLEARANCE_SNR_ECU_061',
+         26: 'TW_CLEARANCE_SNR_ECU_062', 27: 'na'}
+
 def cal_distance_center(row):
     """
 
@@ -191,12 +207,14 @@ def category_signal(row):
         return 2
     elif row["Signal Name"][:6]=='CANFD_':
         return 3
-    elif row["Signal Name"][:4]=='GND_':
+    elif row["Signal Name"][:4]=='GND_' or 'GND' in row["Signal Name"] :
         return 4
     elif row["Signal Name"][:9]=='GNDR_GND_':
         return 5
-    elif row["Signal Name"][:3]=='HV_':
+    elif row["Signal Name"][:3]=='HV_' or 'POWER' in row['Signal Name']:
         return 6
+    elif row["Signal Name"] =='na':
+        return 8
     else:
         return 7
 
@@ -241,7 +259,6 @@ def no_signal_in_pin(row):
         return 1
     else:
         return 0
-
 
 def multicore_data(data):
     """
@@ -478,7 +495,6 @@ def create_connector_dicc(groupped2):
 
     return connectors
 
-
 def save_dict_pickle(dict, file, path):
     """
 
@@ -505,6 +521,7 @@ def get_bin_10(n,bins10):
             _bin=i-1
             break
     return _bin
+
 def get_pin_signal(sig_conn,i):
     """
     #1 number pins [0,Num_Pin_unique_max]
@@ -547,3 +564,376 @@ def get_pin_signal(sig_conn,i):
     return list([Num_Pins,distance_to_center,neighbors_length,internal_pin,mean_neighbors,
                  centroide_distance,signal_group,Cat_Wire_WireColor,WireCSA,is_multicore,
                  number_internal_pin,nosignal,ismulticore, cat_multicore])
+
+def getKey(dct, value):
+    """
+
+    :param dct:
+    :param value:
+    :return:
+    """
+    return [key for key in dct if (dct[key] == value)]
+
+def category_signal_test(row,col):
+    """
+    use in demo
+    :param row:
+    :return:
+    """
+    if row["cat_"+str(col)][:5]=='BATT_':
+        return 1
+    elif row["cat_"+str(col)][:4]=='CAN_':
+        return 2
+    elif row["cat_"+str(col)][:6]=='CANFD_':
+        return 3
+    elif row["cat_"+str(col)][:4]=='GND_' or 'GND' in row["cat_"+str(col)]:
+        return 4
+    elif row["cat_"+str(col)][:9]=='GNDR_GND_':
+        return 5
+    elif row["cat_"+str(col)][:3]=='HV_' or 'POWER' in row["cat_"+str(col)]:
+        return 6
+    elif row["cat_"+str(col)] == 'na':
+        return 8
+    else:
+        return 7
+
+def return_cat(row, col ,dicc_cat):
+    """
+    return signal category, use on demo
+    :param row:
+    :param col:
+    :param dicc_cat:
+    :return:
+    """
+    cat=row[col]
+    return dicc_cat[cat]
+
+def get_pin_signal_test(sig_conn,i,signal_cat):
+    """
+    USE IN DEMO
+
+    #1 number pins [0,Num_Pin_unique_max]
+    #2 distance to center pin [0,11]bucket
+    #3 number of neighbors[0,Num_Pin_unique_max-1]
+    #4 internal/external[0,1]
+    #5 mean_neighbors [0,11]bucket
+    #6 distance centroide [0,11]bucket
+    #7 signal category [0,7]
+    #8 color wire categorical[0,max_color_categories]
+    #9 thickness wire continuous[0,51]bucket
+    #10 multicore yes/no [0,1]
+    #11 number of internal pins [0,Num_Pin_unique_max//2]
+    #12 nosignal [0,1]
+    #13 ismulticore [0,1]
+    #14 category multicore [0,max_multicore_categories]
+    get observation from File
+    :param sig_conn:
+    :param i:
+    :return:
+    """
+    # create bins
+    bins_distance= np.linspace(sig_conn['1']['min_distance'], sig_conn['1']['max_distance'], 11)
+    bins_thickness= np.linspace(sig_conn['1']['Wire_WireCSA_min'], sig_conn['1']['Wire_WireCSA_max'], 51)
+
+    Num_Pins=sig_conn[str(i)]['Num_Pins']
+    distance_to_center=get_bin_10(random.randint(0, 10), bins_distance)
+    neighbors_length=sig_conn[str(i)]['neighbors_length']
+    internal_pin = 1 if sig_conn[str(i)]['internal_pin'] =='True' else 0
+    mean_neighbors=get_bin_10(random.randint(0, 10), bins_distance)
+    centroide_distance=get_bin_10(sig_conn[str(i)]['centroide_distance'], bins_distance)
+    signal_group= signal_cat # Signal Category for test
+    Cat_Wire_WireColor=sig_conn[str(i)]['Cat_Wire_WireColor']
+    WireCSA=get_bin_10(random.randint(0, 51), bins_thickness)
+    is_multicore = 0 if sig_conn[str(i)]['is_multicore'] =='na' else 1
+    number_internal_pin= sig_conn[str(i)]['number_internal_pin']
+    nosignal = random.randint(0, 1)
+    ismulticore= random.randint(0, 1)
+    cat_multicore=sig_conn[str(i)]['multicore_same']
+    return list([Num_Pins,distance_to_center,neighbors_length,internal_pin,mean_neighbors,
+                 centroide_distance,signal_group,Cat_Wire_WireColor,WireCSA,is_multicore,
+                 number_internal_pin,nosignal,ismulticore, cat_multicore])
+
+def get_models_sizes(connectors_dicc):
+    """
+    create a vector with all posible sizes of connectors and a dicctionary with key num_pins and a vector
+    with the names of connectors that have this pins
+
+    :param connectors_dicc:
+    :return:
+    """
+    d_models = []
+    model_connectors = {}
+
+    for connector in connectors_dicc.keys():
+        num_pins = connectors_dicc[connector]['1']['Num_Pins']
+
+        if not (num_pins in d_models):
+            d_models.append(num_pins)
+
+            model_connectors[num_pins] = []
+        if not (connector in model_connectors[num_pins]):
+            model_connectors[num_pins].append(connector)
+    return d_models, model_connectors
+
+
+def create_dataframe_test(Num_Pins, num_signals):
+    """
+
+    :param Num_Pins:
+    :param num_signals:
+    :return:
+    """
+    cols = [str(i) for i in range(1, Num_Pins + 1)]
+    data_test = pd.DataFrame(data=[], columns=cols)
+    for x in range(0, 50000):
+        variant = []
+        data = {}
+        for i in range(0, Num_Pins):
+            variant.append(random.randint(0, num_signals - 1))
+            data[str(i + 1)] = random.randint(0, num_signals - 1)
+        data_test = data_test.append(data, ignore_index=True)
+
+    for col in data_test.columns:
+        data_test["cat_" + str(col)] = data_test.apply(lambda row: return_cat(row, col, dicc_13), axis=1)
+
+        data_test[col] = data_test.apply(lambda row: category_signal_test(row, col), axis=1)
+
+    return data_test
+
+def calculate_max_reward(Num_Pins,  connectors_dicc, connector):
+    """
+
+    :param Num_Pins:
+    :param num_signals:
+    :param dicc_signals:
+    :return:
+    """
+
+
+    signal_cats=[]
+    for key in connectors_dicc[connector].keys():
+        if key != 'PartNumber':
+            signal_cats.append(connectors_dicc[connector][key]['signal_group'])
+
+    try:
+        num_internal_pins= connectors_dicc[connector]['1']['number_internal_pin']
+    except:
+        num_internal_pins = 0
+    # reward different categories each pin
+    reward_signal_cat=Num_Pins * 4
+    #reward high voltage close to empty cavities
+    if (1 in signal_cats) or (6 in signal_cats) or (8 in signal_cats):
+        reward_high_volatge= num_internal_pins * 5
+    else:
+        reward_high_volatge=0
+    # if GROUND is present reward more when far from High Power categories
+    if ((1 in signal_cats) or (6 in signal_cats) or (8 in signal_cats)) and ((5 in signal_cats) or (4 in signal_cats )):
+        reward_ground = 3
+    else:
+        reward_ground = 0
+    # reward high Power b#not with ground
+    if ((4 in signal_cats) or (5 in signal_cats) or (8 in signal_cats)) and ((1 in signal_cats) or (6 in signal_cats )):
+        reward_HV = 3
+    else:
+        reward_HV = 0
+    # reward all as must as distance as possible from HP
+    if (6 in signal_cats):
+        reward_distance= (Num_Pins -1)*3
+    else:
+        reward_distance = 0
+
+    # rewards from different colors
+    reward_color = Num_Pins * 4
+
+    # reward internal pins
+    reward_internal_pins= num_internal_pins * 4
+
+    # reward multicore
+    multicore = []
+    for key in connectors_dicc[connector].keys():
+        if key != 'PartNumber':
+            multicore.append(connectors_dicc[connector][str(key)]['is_multicore'])
+
+    num_of_multicore=sum(multicore)
+    reward_multicore=num_of_multicore * 6
+
+    reward = reward_multicore + reward_internal_pins + reward_color +reward_distance + reward_HV + reward_ground \
+        + reward_high_volatge + reward_signal_cat
+    return reward
+
+def create_dataframe_test_2(Num_Pins, num_signals, dicc_signals):
+    """
+
+    :param Num_Pins:
+    :param num_signals:
+    :param dicc_signals:
+    :return:
+    """
+    number_possible_variations= 10000
+    if num_signals < 10 and Num_Pins < 10:
+        number_possible_variations=abs(np.int64(num_signals**Num_Pins))
+    else:
+        print("huge Number")
+
+    num_iterations=0
+    #power= len(str(number_possible_variations)) - 4
+
+    dicc_signals_copy = copy.deepcopy(dicc_signals)
+
+    if "na" in list(dicc_signals.values()):
+        key = getKey(dicc_signals_copy, 'na')[0]
+        dicc_signals_copy.pop(key, None)
+
+    if number_possible_variations < 5000:
+        num_iterations = number_possible_variations
+    else:
+
+        num_iterations = 10000
+
+    cols = [str(i) for i in range(1, Num_Pins + 1)]
+    data_test = pd.DataFrame(data=[], columns=cols)
+
+    print(f"Dataframe size {num_iterations}")
+    for x in range(0, num_iterations):
+        signals = list(dicc_signals_copy.values())
+        conn = np.zeros((Num_Pins), dtype="int")
+        pin_used = []
+        breaker = False
+        data = {}
+        while breaker == False:
+            pin = random.randint(0, Num_Pins - 1)
+            if not (pin in pin_used):
+                pin_used.append(pin)
+                if len(signals) > 0:
+                    pos = random.randint(0, len(signals) - 1)
+                    conn[pin] = getKey(dicc_signals, signals[pos])[0]
+                    data[str(pin + 1)] = getKey(dicc_signals, signals[pos])[0]
+                    # print(signals[pos])
+                    signals.remove(signals[pos])
+                else:
+                    data[str(pin + 1)] = getKey(dicc_signals, 'na')[0]
+                    # print("na")
+            if len(pin_used) == Num_Pins:
+                data_test = data_test.append(data, ignore_index=True)
+                breaker = True
+
+
+    for col in data_test.columns:
+        data_test["cat_" + str(col)] = data_test.apply(lambda row: return_cat(row, col, dicc_signals), axis=1)
+        data_test[col] = data_test.apply(lambda row: category_signal_test(row, col), axis=1)
+
+    number_possible_variations = abs(np.int64(num_signals ** Num_Pins))
+
+    return data_test, number_possible_variations, num_iterations
+
+def smap(f):
+    return f()
+
+def train_models_multi(d_models, connectors_dicc, data, max_categories, algo, model_connectors):
+
+    pool = multiprocessing.Pool(processes=len(d_models))
+    funcs = []
+    for size in d_models:
+        connector = model_connectors[size][0]
+        func = functools.partial(train_agent2, connectors_dicc, connector, data, max_categories, algo, size)
+        funcs.append(func)
+
+    print("multiprocessing")
+    res = pool.map(smap, funcs)
+
+
+    pool.close()
+    pool.join()
+    return res
+
+
+
+def predict_demo(chunck, data, algo, connectors_dicc, connector):
+    """
+    Demo functionality
+    :param data_test:
+    :param algo:
+    :param connectors_dicc:
+    :param connector:
+    :return:
+
+    """
+    # create chunck
+    start = chunck[0]
+    end = chunck[1]
+    data_test = data[start:end]
+
+    data_test['prediction'] = 0
+    for i, row in data_test.iterrows():
+        model, env = demo_agent2(connectors_dicc, connector, algo)
+        obs = env.reset()
+        for key in connectors_dicc[connector].keys():
+            if key != 'PartNumber':
+                # for c in tcols:
+                signalcat = data_test.loc[i, key]
+                obs = np.array(get_pin_signal_test(connectors_dicc[connector], key, signalcat))
+                action, _state = model.predict(obs, deterministic=False)
+
+                obs, reward, done, info = env.step(action.astype(int))
+
+                env.render()
+                if done:
+                    obs = env.reset()
+
+        #print(reward)
+        data_test.at[i, 'prediction'] = reward
+
+    return data_test
+
+
+def split_dataframe(df, chunk_size = 10000):
+    """
+
+    :param df:
+    :param chunk_size:
+    :return:
+    """
+    chunks = list()
+    num_chunks = len(df) // chunk_size + 1
+    for i in range(num_chunks):
+        chunks.append((i*chunk_size,(i+1)*chunk_size))
+    return chunks
+
+
+def prediction_multiprocessing(data,algo, connectors_dicc, connector):
+    """
+    multiprocessing Prediction
+    :param data:
+    :param algo:
+    :param connectors_dicc:
+    :param connector:
+    :return:
+    """
+
+    # number of processes
+    max_workers = int(multiprocessing.cpu_count()) - 1
+    # create chuncks
+    chunksize = (len(data) // max_workers) + 1
+    chunksdf = split_dataframe(data, chunksize)
+    # create Pool
+    pool = multiprocessing.Pool(processes=max_workers)
+    funcs = []
+    for chunck in chunksdf:
+
+        func = functools.partial(predict_demo, chunck, data, algo, connectors_dicc, connector)
+        funcs.append(func)
+
+    print("multiprocessing")
+    res = pool.map(smap, funcs)
+
+    pool.close()
+    pool.join()
+    data_final=res[0]
+    for i in range(1, len(res)):
+        data_final = data_final.append(res[i],  ignore_index=True)
+
+    return data_final
+
+
+
+
