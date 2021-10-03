@@ -224,6 +224,7 @@ class agent2(gym.Env):
 
         # real=self.get_real(action) #  real values
         # calculate Reward
+
         self.reward = self.reward + self.calculate_reward(action)
 
         # Account for the boundaries of the grid
